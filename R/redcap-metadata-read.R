@@ -13,6 +13,7 @@
 #' @param fields_collapsed A single string, where the desired field names are separated by commas.  Optional.
 #' @param verbose A boolean value indicating if `message`s should be printed to the R console during the operation.  The verbose output might contain sensitive information (*e.g.* PHI), so turn this off if the output might be visible somewhere public. Optional.
 #' @param config_options  A list of options to pass to `POST` method in the `httr` package.  See the details in [redcap_read_oneshot()]. Optional.
+#' @param project A boolean value indicating if project-level metadata (e.g., project ID) should be output in place of field-level metadata.  Optional.
 #'
 #' @return Currently, a list is returned with the following elements,
 #'
@@ -50,7 +51,8 @@ redcap_metadata_read <- function(
   forms             = NULL, forms_collapsed  = "",
   fields            = NULL, fields_collapsed = "",
   verbose           = TRUE,
-  config_options    = NULL
+  config_options    = NULL,
+  project           = NULL
 ) {
 
   checkmate::assert_character(redcap_uri                , any.missing=F, len=1, pattern="^.{1,}$")
@@ -61,19 +63,34 @@ redcap_metadata_read <- function(
   forms_collapsed     <- collapse_vector(forms    , forms_collapsed)
   verbose             <- verbose_prepare(verbose)
 
-  post_body <- list(
-    token    = token,
-    content  = 'metadata',
-    format   = 'csv',
-    forms    = forms_collapsed,
-    fields   = fields_collapsed
-  )
+  if (is.null(project) || project == FALSE) {
+    post_body <- list(
+      token    = token,
+      content  = 'metadata',
+      format   = 'csv',
+      forms    = forms_collapsed,
+      fields   = fields_collapsed
+    )
+  } else if (project) {
+    post_body <- list(
+      token    = token,
+      content  = 'project',
+      format   = 'csv',
+      forms    = forms_collapsed,
+      fields   = fields_collapsed
+    )
+  }
 
   # This is the important line that communicates with the REDCap server.
   kernel <- kernel_api(redcap_uri, post_body, config_options)
 
-  if( kernel$success ) {
-    col_types <- readr::cols(field_name = readr::col_character(), .default = readr::col_character())
+  if ( kernel$success ) {
+    if (is.null(project) || project == FALSE) {
+      col_types <- readr::cols(field_name = readr::col_character(), .default = readr::col_character())
+    }
+    else if (project) {
+      col_types <- readr::cols(.default = readr::col_character())
+    }
 
     try (
       ds <- readr::read_csv(kernel$raw_text, col_types = col_types), #Convert the raw text to a dataset.
@@ -81,14 +98,21 @@ redcap_metadata_read <- function(
     )
 
     if( exists("ds") & inherits(ds, "data.frame") ) {
-      outcome_message <- paste0(
-        "The data dictionary describing ",
-        format(nrow(ds), big.mark=",", scientific=FALSE, trim=TRUE),
-        " fields was read from REDCap in ",
-        round(kernel$elapsed_seconds, 1), " seconds.  The http status code was ",
-        kernel$status_code, "."
-      )
-
+      if (is.null(project) || project == FALSE) {
+        outcome_message <- paste0(
+          "The data dictionary describing ",
+          format(nrow(ds), big.mark=",", scientific=FALSE, trim=TRUE),
+          " fields was read from REDCap in ",
+          round(kernel$elapsed_seconds, 1), " seconds.  The http status code was ",
+          kernel$status_code, "."
+        )
+      } else if (project) {
+        outcome_message <- paste0(
+          "The project metadata was read from REDCap in ",
+          round(kernel$elapsed_seconds, 1), " seconds.  The http status code was ",
+          kernel$status_code, "."
+        )
+      }
       kernel$raw_text   <- "" # If an operation is successful, the `raw_text` is no longer returned to save RAM.  The content is not really necessary with httr's status message exposed.
     } else {
       success           <- FALSE #Override the 'success' determination from the http status code.
@@ -102,17 +126,30 @@ redcap_metadata_read <- function(
 
   if( verbose )
     message(outcome_message)
+  if (is.null(project) || project == FALSE) {
+    return( list(
+      data               = ds,
+      success            = kernel$success,
+      status_code        = kernel$status_code,
+      outcome_message    = outcome_message,
+      forms_collapsed    = forms_collapsed,
+      fields_collapsed   = fields_collapsed,
+      elapsed_seconds    = kernel$elapsed_seconds,
+      raw_text           = kernel$raw_text
+    ) )
+  } else if (project) {
+    return(
+      list(
+        data               = ds,
+        success            = kernel$success,
+        status_code        = kernel$status_code,
+        outcome_message    = outcome_message,
+        elapsed_seconds    = kernel$elapsed_seconds,
+        raw_text           = kernel$raw_text
+      )
+    )
+  }
 
-  return( list(
-    data               = ds,
-    success            = kernel$success,
-    status_code        = kernel$status_code,
-    outcome_message    = outcome_message,
-    forms_collapsed    = forms_collapsed,
-    fields_collapsed   = fields_collapsed,
-    elapsed_seconds    = kernel$elapsed_seconds,
-    raw_text           = kernel$raw_text
-  ) )
 }
 
 # uri <- "https://bbmc.ouhsc.edu/redcap/api/"
